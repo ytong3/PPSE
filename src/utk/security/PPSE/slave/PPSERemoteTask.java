@@ -4,14 +4,13 @@ import java.io.Serializable;
 
 import utk.security.PPSE.master.Task;
 
-public class PSSERemoteTask extends Task implements Serializable{
-
+public class PPSERemoteTask extends Task implements Serializable{
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = 1L;
 
-	public PSSERemoteTask(Task t){
+	public PPSERemoteTask(Task t){
 		this.freqBand = t.freqBand;
 		this.inputFile = t.inputFile;
 		this.timeWindow = t.timeWindow;
