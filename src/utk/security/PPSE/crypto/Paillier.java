@@ -78,11 +78,15 @@ public class Paillier {
     	if (pubkey) {
     		encryptionMode = true; //with pubkey, only encryptionMode is valid
     		//read key file
-    		try(BufferedReader br = new BufferedReader(new FileReader(keyFile)))
-    		{
+    		BufferedReader br = null;
+    		try{
+    			br = new BufferedReader(new FileReader(keyFile));
 				String line = br.readLine();
-				if ("Public".equalsIgnoreCase(line)) throw new Exception("Wrong file format");
-				//get n and g as the public key
+				if (!"Public".equalsIgnoreCase(line)) throw new IOException("Wrong file format");
+				//get bigLength, n and g as the public key
+				line = br.readLine();
+				if (line==null) throw new Exception("Wrong file format");
+				bitLength = Integer.parseInt(line);
 				line = br.readLine();
 				if (line==null) throw new Exception("Wrong file format");
 				n = new BigInteger(line);
@@ -94,6 +98,13 @@ public class Paillier {
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
+			} finally{
+				try {
+					br.close();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 			}
     	}
     	else{//keyFile contains the private key. Private key contains an additional lambda comapred to public key
@@ -102,8 +113,13 @@ public class Paillier {
     		{
     			br = new BufferedReader(new FileReader(keyFile));
 				String line = br.readLine();
-				if ("Private".equalsIgnoreCase(line)) throw new Exception("Wrong file format");
-				//get n and g as the public key
+				if (!"Private".equalsIgnoreCase(line)) throw new Exception("Wrong file format");
+				//get bigLength n, g, and lambda as the private key
+				
+				line = br.readLine();
+				if (line==null) throw new Exception("Wrong file format");
+				bitLength = Integer.parseInt(line);
+				
 				line = br.readLine();
 				if (line==null) throw new Exception("Wrong file format");
 				n = new BigInteger(line);
@@ -118,10 +134,15 @@ public class Paillier {
 				lambda = new BigInteger(line);
 				encryptionMode = false; //decryption mode is activated if a private key is obtained
 				
-				
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
+			} finally{
+				try {
+					br.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 			}
     		
     	}
@@ -132,11 +153,30 @@ public class Paillier {
     	try{
     		out = new PrintWriter(new FileWriter(publicKeyFile));
     		out.println("Public");
+    		out.println(bitLength);
     		out.println(n.toString());
     		out.println(g.toString());
     		return true;
     	} catch (IOException e) {
 			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		}finally{
+			out.close();
+		}
+    }
+    
+    public boolean exportPrivateKey(String privateKeyFile){
+    	PrintWriter out = null;
+    	try{
+    		out = new PrintWriter(new FileWriter(privateKeyFile));
+    		out.println("Private");
+    		out.println(bitLength);
+    		out.println(n.toString());
+    		out.println(g.toString());
+    		out.println(lambda.toString());
+    		return true;
+    	} catch (IOException e) {
 			e.printStackTrace();
 			return false;
 		}finally{
@@ -193,7 +233,8 @@ public class Paillier {
      */
     public BigInteger Encryption(BigInteger m) {
         BigInteger r = new BigInteger(bitLength, new Random());
-        return g.modPow(m, nsquare).multiply(r.modPow(n, nsquare)).mod(nsquare);
+        BigInteger res = g.modPow(m, nsquare).multiply(r.modPow(n, nsquare)).mod(nsquare);
+        return res;
     }
 
     /**
@@ -219,7 +260,14 @@ public class Paillier {
      * @throws Exception 
      */
     
+    public static void main(String[] args) throws Exception {
+    	Paillier crypto = new Paillier(128,512);
+    	crypto.exportPublicKey("testPubKey.pub");
+    	crypto.exportPrivateKey("testPrivteKey.pri");
+    }
     
+    
+    /*
     public static void main(String[] str) throws Exception {
         // instantiating an object of Paillier cryptosystem
         Paillier paillier = new Paillier();
@@ -248,4 +296,5 @@ public class Paillier {
         System.out.println("original product: " + prod_m1m2.subtract(paillier.n).toString());
         System.out.println("decrypted product: " + paillier.Decryption(expo_em1m2).toString());
       }
+      */
 }

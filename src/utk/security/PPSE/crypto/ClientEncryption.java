@@ -14,18 +14,16 @@ import java.util.List;
 import org.jscience.mathematics.number.Complex;
 
 public class ClientEncryption {
-	private Paillier crypto;
+	private PaillierFFT crypto;
 	protected long Q1;//Q1 the scaling factor to preserve the digits after the decimal points
 	protected long Q2;//Scaling factor to quantize the the Fourier matrix
-	protected BigInteger bigQ1;
-	protected BigInteger bigQ2;
 	
 	
 	
 	public ClientEncryption(String publicKey){
-		crypto = new Paillier(publicKey,true);
 		Q1 = 10000L;//use default value
 		Q2 = 10000L;
+		crypto = new PaillierFFT(Q1,Q2,publicKey,true);
 	}
 	
 	/**
@@ -41,16 +39,23 @@ public class ClientEncryption {
 		List<Complex> buf = new ArrayList<Complex>();
 		
 		//open the source file
-		try(BufferedReader br = new BufferedReader(new FileReader(sourceFile))){
+		BufferedReader br = null;
+		try{
+			br = new BufferedReader(new FileReader(sourceFile));
 			String line = null;
 			while((line = br.readLine())!=null){
-				//each line is time stamp + measurement
+				//each line is time stamp + measurement or just the measurement
 				String[] strs = line.split(",");
-				buf.add(Complex.valueOf(Double.parseDouble(strs[1]), 0));
+				if (strs.length>1)
+					buf.add(Complex.valueOf(Double.parseDouble(strs[1]), 0));
+				else{
+					buf.add(Complex.valueOf(Double.parseDouble(strs[0]), 0));
+				}
+					
 			}
 			
 			//perform encryption
-			List<BigComplex> encryptedData = encryptSequence(buf);
+			List<BigComplex> encryptedData = crypto.encryptSequence(buf);
 			
 			//write to file
 			//first write the parameters: Q1, Q2
@@ -58,8 +63,10 @@ public class ClientEncryption {
 			out.println("Q1:"+Q1+" "+"Q2:"+Q2);
 			//print object in encryptedData to file
 			for(BigComplex item: encryptedData){
+				//System.out.println(item.toString());
 				out.println(item.toString());
 			}
+			out.close();
 			return true;
 			
 		} catch (FileNotFoundException e) {
@@ -68,14 +75,23 @@ public class ClientEncryption {
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+		}finally{
+			try {
+				br.close();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
 		return false;
 	}
-	
+
+
 	/**
 	 * A quantization method to convert a complex number to BigComplex by *10000
 	 * @param cn The complex number to be converted.
 	 */
+/*
 	private static BigComplex quantize(Complex cn, long scale) {
 		return new BigComplex(BigInteger.valueOf((long)(cn.getReal()*scale)),BigInteger.valueOf((long)(cn.getImaginary()*scale)));
 	}
@@ -98,5 +114,11 @@ public class ClientEncryption {
 			res.add(new BigComplex(crypto.Encryption(element.real),crypto.Encryption(element.img)));
 		}
 		return res;
+	}
+*/
+	
+	public static void main(String[] args){
+		ClientEncryption crypto = new ClientEncryption("testPubKey.pub");
+		crypto.encryptRawMeasurement("original_angles_4000samples.csv", "original_angles_4000samples.csv.enc");
 	}
 }

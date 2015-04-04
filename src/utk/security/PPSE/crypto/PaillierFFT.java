@@ -39,12 +39,14 @@ public class PaillierFFT implements HomomorphicDFT{
 	protected static int windowLength = 4000; // the window length
 	protected static int overlap = 3900; //steps of the sliding window slide each time.
 	protected ArrayList<ArrayList<Complex>> DFTLookup;
+	private boolean mode;
 
 	//private ArrayList<Integer> quantizationCounter;
 	private static final boolean debug = true;
 
-	public PaillierFFT(long Q1, long Q2, String pubKey){
-		crypto = new Paillier(pubKey,true);
+	public PaillierFFT(long Q1, long Q2, String keyFile, boolean keyType){
+		crypto = new Paillier(keyFile,keyType);
+		mode = keyType;//true for encrytion, false for decryption
 		this.Q1 = Q1;
 		this.Q2 = Q2;
 		bigQ1 = BigInteger.valueOf(Q1);
@@ -54,7 +56,7 @@ public class PaillierFFT implements HomomorphicDFT{
 	
 	private void buildLookUpTable(int windowLength){
 		DFTLookup = new ArrayList<ArrayList<Complex> >();
-		Complex Wik;;
+		Complex Wik;
 		Complex ExpWik;
 		for (int k=0;k<windowLength;k++)
 		{
@@ -100,7 +102,6 @@ public class PaillierFFT implements HomomorphicDFT{
 				Complex Wik = Complex.valueOf(0,0-2*k*Math.PI*i/n);
 				Wik = Wik.exp();
 				tmp = tmp.plus(Wik.times(buf.get(i)));
-				//System.out.println("tmp" + tmp);
 			}
 
 			spectrum.add(tmp);
@@ -145,7 +146,7 @@ public class PaillierFFT implements HomomorphicDFT{
 			}		
 			encSpectrum.add(tmp);
 		}
-		System.out.println((System.currentTimeMillis()-t0)/10*n);
+		System.out.println("Runtime for computing one frequency coefficient "+(System.currentTimeMillis()-t0)/10*n);
 		return encSpectrum;
 	}
 
@@ -215,6 +216,14 @@ public class PaillierFFT implements HomomorphicDFT{
 		return res;
 	}
 	
+	private Complex dequantizeMeasurementData(BigComplex bigComplexNum){
+		BigInteger[] realDqRes = bigComplexNum.real.divideAndRemainder(bigQ1);
+		BigInteger[] imgDqRes = bigComplexNum.img.divideAndRemainder(bigQ1);
+
+		Complex res = Complex.valueOf(realDqRes[0].doubleValue()+realDqRes[1].doubleValue()/(Q1), imgDqRes[0].doubleValue()+imgDqRes[1].doubleValue()/(Q1));
+		return res;
+	}
+	
 	/**
 	 * A quantization method to convert a complex number to BigComplex by *10000
 	 * @param cn The complex number to be converted.
@@ -239,37 +248,56 @@ public class PaillierFFT implements HomomorphicDFT{
 		ArrayList<BigComplex> res = new ArrayList<BigComplex>();
 		for (BigComplex element:BigPlainSeq){
 			res.add(new BigComplex(crypto.Encryption(element.real),crypto.Encryption(element.img)));
+			System.out.println(res.get(res.size()-1));
 		}
 		return res;
 	}
 
-	private Complex decryptBigComplex(BigComplex cn) throws Exception{
+	private Complex decryptBigComplex(BigComplex cn, boolean rawMeasurement) throws Exception{
 		BigComplex decryption = new BigComplex(crypto.Decryption(cn.real),crypto.Decryption(cn.img));
+		if (rawMeasurement)
+			return dequantizeMeasurementData(decryption);
 		return dequantize(decryption);
 	}
 
-	public ArrayList<Complex> decryptSequence(List<BigComplex> encryptedSeq) throws Exception{
+	public ArrayList<Complex> decryptFourierSequence(List<BigComplex> encryptedSeq) throws Exception{
+		if (mode==true){
+			System.err.println("Cannot perform decryption in the Encryption mode");
+			return null;
+		}
 		ArrayList<Complex> res = new ArrayList<Complex>();
 		for(BigComplex element: encryptedSeq){
-			res.add(decryptBigComplex(element));
+			res.add(decryptBigComplex(element,false));
 		}
 		return res;
 	}
 	
-	List<Complex> dft(List<Complex> buf, int n, int fStart, int fEnd) {
+	public ArrayList<Complex> decryptMeasurementSequence(List<BigComplex> encryptedSeq) throws Exception{
+		if (mode==true){
+			System.err.println("Cannot perform decryption in the Encryption mode");
+			return null;
+		}
+		ArrayList<Complex> res = new ArrayList<Complex>();
+		for(BigComplex element: encryptedSeq){
+			BigComplex decryption = new BigComplex(crypto.Decryption(element.real),crypto.Decryption(element.img));
+			res.add(decryptBigComplex(element,true));
+		}
+		return res;
+	}
+	
+	public static List<Complex> dft(List<Complex> buf, int n, int fStart, int fEnd) {
 		List<Complex> spectrum = new ArrayList<Complex>(buf.size());
-		for (int k=0;k<n;k++){
+		for (int k=fStart;k<fEnd+1;k++){
 			//spectrum.add(Complex.valueOf(0,0));
 			Complex tmp = Complex.valueOf(0,0);
-			long tic = System.nanoTime();
-			for (int i=fStart;i<fEnd+1;i++){
-				Complex Wik = Complex.valueOf(0,0-2*k*Math.PI*i/n);
+			//long tic = System.nanoTime();
+			for (int i=0;i<n;i++){
+				Complex Wik = Complex.valueOf(0,(double)-Math.PI*2*k*i/n);
 				Wik = Wik.exp();
 				tmp = tmp.plus(Wik.times(buf.get(i)));
 				//System.out.println("tmp" + tmp);
 			}
 			spectrum.add(tmp);
-			System.out.println((System.nanoTime()-tic));
 		}
 		return spectrum;
 	}
@@ -282,5 +310,45 @@ public class PaillierFFT implements HomomorphicDFT{
 	@Override
 	public List<BigComplex> homoDFT(List<BigComplex> inputList, double freqStart, double freqEnd) {
 		return ppDFT(inputList,windowLength,freqStart,freqEnd);
+	}
+	
+	public static List<Complex> readFromFile(String sourceFile){
+		//read from file
+		List<Complex> buf = new ArrayList<Complex>();
+		//open the source file
+		BufferedReader br = null;
+		try{
+			br = new BufferedReader(new FileReader(sourceFile));
+			String line = null;
+			while((line = br.readLine())!=null){
+				//each line is time stamp + measurement or just the measurement
+				//or just the measurement
+				String[] strs = line.split(",");
+				if (strs.length>1)
+					buf.add(Complex.valueOf(Double.parseDouble(strs[1]), 0));
+				else{
+					buf.add(Complex.valueOf(Double.parseDouble(strs[0]), 0));
+				}	
+			}
+			return buf;
+		} catch (NumberFormatException e) {
+			e.printStackTrace();
+		} catch (IOException e){
+			e.printStackTrace();
+		} finally{
+			try {
+				br.close();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		return null;
+	}
+	
+	public static void main(String[] argv){
+		List<Complex> rawSequence = readFromFile("original_angles_4000samples.csv");
+		List<Complex> spectrum = dft(rawSequence,4000,(int)((0.1/100)*4000),(int)((1.0/100)*4000));
+		System.out.println(spectrum);
 	}
 }

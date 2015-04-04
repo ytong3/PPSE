@@ -8,7 +8,7 @@ public class BigComplex {
 	public BigInteger real;
 	public BigInteger img;
 	
-	//requires that cn has been quantized
+	//requires cn has been quantized
 	public static BigComplex valueOf(Complex cn){
 		return new BigComplex(BigInteger.valueOf((long) cn.getReal()),BigInteger.valueOf((long) cn.getImaginary()));
 	}

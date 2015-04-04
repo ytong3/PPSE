@@ -32,6 +32,7 @@ public class RMIServer implements PPSERMIServer{
 	
 	@Override
 	public String executeTask(PPSERemoteTask task) throws RemoteException {
+		System.err.println("Task Received. Begin Executing.");
 		//server takes care of read and write
 		//read file
 		InputStream fis = null;
@@ -39,6 +40,7 @@ public class RMIServer implements PPSERMIServer{
 		
 		try {
 			//read file
+			System.err.println("Read file.");
 			fis = new FileInputStream(task.inputFile);
 			br = new BufferedReader(new InputStreamReader(fis,Charset.defaultCharset()));
 			String line =null;
@@ -56,27 +58,32 @@ public class RMIServer implements PPSERMIServer{
 			}
 			
 			if (Q1==0||Q2==0) throw new IOException("Bad inialization parameter for PaillierFFT engine");
-					
-			HomomorphicDFT engine = new PaillierFFT(Q1, Q2, pubKeyFile);
+			
+			System.err.println("Create HomomorphicDFT engine");
+			HomomorphicDFT engine = new PaillierFFT(Q1, Q2, pubKeyFile, true);
 			List<BigComplex> encryptedMeasurementData = new ArrayList<BigComplex>();
 			
+			System.err.println("load windowLength worth encrypted measurement data into the the list");
 			//load windowLength encrypted measurement data into the the list.
 			int counter = 0;
 			while ((line=br.readLine())!=null){
 				counter++;
-				String[] tmpStrs = line.split("\t ");
-				//tmpStrs[0] is the timestamp
-				BigComplex singleEncryptedMeasurement = new BigComplex(new BigInteger(tmpStrs[1]),BigInteger.ZERO);
+				String[] tmpStrs = line.split(",");
+				BigComplex singleEncryptedMeasurement = new BigComplex(new BigInteger(tmpStrs[0]),new BigInteger(tmpStrs[1]));
 				encryptedMeasurementData.add(singleEncryptedMeasurement);
 				// check counter. Exit if there are windowLength elements already
-				if (counter==task.timeWindow[1]-task.timeWindow[0]) break;
+				if (counter==(task.timeWindow[1]-task.timeWindow[0])*task.samplingRate) break;
 			}
 						
 			//perform ppDFT with encryptedMeasurementData
+			System.err.println("Perform homoDFT");
 			List<BigComplex> encryptedSpectrum = engine.homoDFT(encryptedMeasurementData, task.freqBand[0], task.freqBand[1]);
 			
 			//send back the encryptedSpectrum
-			return String.format("[%.3f,%.3f]\n",task.freqBand[0],task.freqBand[1])+BigComplex.BigComplexListToString(encryptedSpectrum);
+			System.err.println("Sending back result");
+			return String.format("[%.3f,%.3f]\n",task.freqBand[0],task.freqBand[1])+
+				   String.format("Q1:%d Q2:%d\n",Q1,Q2)+
+				   BigComplex.BigComplexListToString(encryptedSpectrum);
 		} catch (IOException e) {
 			System.err.println(e.getClass()+":"+e.getMessage());
 			e.printStackTrace();
@@ -86,6 +93,8 @@ public class RMIServer implements PPSERMIServer{
 				if (br!=null) br.close();
 			}
 			catch(IOException ex){
+				System.err.println(ex.getClass()+":"+ex.getMessage());
+				ex.printStackTrace();
 			}
 		}
 		
@@ -105,11 +114,12 @@ public class RMIServer implements PPSERMIServer{
 				return;
 			}
 			int portNum = Integer.parseInt(argv[0]);
+			System.out.println("Binding to rmi registry at port: "+portNum);
 			RMIServer serverObj = new RMIServer(argv[1]);
 			PPSERMIServer stub = (PPSERMIServer) UnicastRemoteObject.exportObject(serverObj, 0);
 			//Bind the remote object's stub in the registry
 			Registry registry = LocateRegistry.getRegistry(portNum);
-			registry.rebind("PPSE", stub);
+			registry.rebind("PPSERMIServer", stub);
 			
 			System.err.println("Server Ready");
 		} catch(Exception e){

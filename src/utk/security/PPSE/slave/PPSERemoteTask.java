@@ -14,5 +14,6 @@ public class PPSERemoteTask extends Task implements Serializable{
 		this.freqBand = t.freqBand;
 		this.inputFile = t.inputFile;
 		this.timeWindow = t.timeWindow;
+		this.samplingRate = t.samplingRate;
 	}
 }
