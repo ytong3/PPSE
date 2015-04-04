@@ -4,6 +4,8 @@ import java.util.List;
 
 import org.jscience.mathematics.number.Complex;
 
+import utk.security.PPSE.slave.HomomorphicDFT;
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.FileInputStream;
@@ -27,10 +29,11 @@ import java.util.*;
  * @author ytong3
  *
  */
-public class PaillierFFT {
+public class PaillierFFT implements HomomorphicDFT{
 	protected Paillier crypto;
 	protected long Q1;//Q1 the scaling factor to preserve the digits after the decimal points
 	protected long Q2;//Scaling factor to quantize the the Fourier matrix
+	protected double samplingRate = 100; //Hz 
 	protected BigInteger bigQ1;
 	protected BigInteger bigQ2;
 	protected static int windowLength = 4000; // the window length
@@ -40,7 +43,7 @@ public class PaillierFFT {
 	//private ArrayList<Integer> quantizationCounter;
 	private static final boolean debug = true;
 
-	protected PaillierFFT(long Q1, long Q2, String pubKey){
+	public PaillierFFT(long Q1, long Q2, String pubKey){
 		crypto = new Paillier(pubKey,true);
 		this.Q1 = Q1;
 		this.Q2 = Q2;
@@ -115,7 +118,7 @@ public class PaillierFFT {
 		List<BigComplex> encSpectrum = new ArrayList<BigComplex>(buf.size());
 		long t0;
 		t0 = System.currentTimeMillis();
-		for (int k=0;k<10;k++){
+		for (int k=0;k<n;k++){
 			//TODO change the start value to the encryption of some random value to randomize the final result
 			//Blinding
 			
@@ -143,6 +146,47 @@ public class PaillierFFT {
 			encSpectrum.add(tmp);
 		}
 		System.out.println((System.currentTimeMillis()-t0)/10*n);
+		return encSpectrum;
+	}
+
+	private List<BigComplex> ppDFT(List<BigComplex> buf, int n, double fStart, double fEnd) {
+		List<BigComplex> encSpectrum = new ArrayList<BigComplex>(buf.size());
+		
+		//double t0 = System.currentTimeMillis();
+		int fStartIndex = (int) ((fStart/samplingRate)*n);
+		int fEndIndex = (int) ((fEnd/samplingRate)*n);
+		
+		// compute only the coeffcients needed
+		for (int k=fStartIndex;k<fEndIndex+1;k++){
+			//TODO change the initial value to the encryption of some random value to randomize the final result
+			//Blinding
+			BigComplex tmp = new BigComplex(BigInteger.ONE,BigInteger.ONE);
+			
+			long tic = System.nanoTime();
+	
+			for (int i=0;i<n;i++){
+				//now quantize Wik
+				BigComplex qWik= quantize(DFTLookup.get(i).get(k),Q2);
+	
+				//pull out encrypted buf[i];
+				BigComplex currentElement = buf.get(i);
+				assert currentElement.img.equals(BigInteger.ZERO);
+				//calculate E[a(b+ci)], where a is already encrypted
+				BigInteger encProdReal = currentElement.real.modPow(qWik.real, crypto.nsquare);
+				BigInteger encProdImg = currentElement.real.modPow(qWik.img, crypto.nsquare);
+				//quantizationCounter.set(k, quantizationCounter.get(i).intValue()+1);
+	
+				//add to tmp;
+				//utilizing the multiplicative property
+				tmp.real = tmp.real.multiply(encProdReal).mod(crypto.nsquare);
+				tmp.img = tmp.img.multiply(encProdImg).mod(crypto.nsquare);
+				//quantizationCounter.set(k, quantizationCounter.get(i).intValue()+1);
+	
+			}
+			encSpectrum.add(tmp);
+			System.out.println(System.nanoTime()-tic);
+		}
+		//System.out.println((System.currentTimeMillis()-t0));
 		return encSpectrum;
 	}
 
@@ -230,136 +274,13 @@ public class PaillierFFT {
 		return spectrum;
 	}
 	
-	private List<BigComplex> ppDFT(List<BigComplex> buf, int n, double fStart, double fEnd) {
-		List<BigComplex> encSpectrum = new ArrayList<BigComplex>(buf.size());
-		
-		//double t0 = System.currentTimeMillis();
-		int fStartIndex = (int) ((fStart/100)*n);
-		int fEndIndex = (int) ((fEnd/100)*n);
-		
-		// compute only the coeffcients needed
-		for (int k=fStartIndex;k<fEndIndex+1;k++){
-			//TODO change the initial value to the encryption of some random value to randomize the final result
-			//Blinding
-			BigComplex tmp = new BigComplex(BigInteger.ONE,BigInteger.ONE);
-			
-			long tic = System.nanoTime();
-
-			for (int i=0;i<n;i++){
-				//now quantize Wik
-				BigComplex qWik= quantize(DFTLookup.get(i).get(k),Q2);
-
-				//pull out encrypted buf[i];
-				BigComplex currentElement = buf.get(i);
-				assert currentElement.img.equals(BigInteger.ZERO);
-				//calculate E[a(b+ci)], where a is already encrypted
-				BigInteger encProdReal = currentElement.real.modPow(qWik.real, crypto.nsquare);
-				BigInteger encProdImg = currentElement.real.modPow(qWik.img, crypto.nsquare);
-				//quantizationCounter.set(k, quantizationCounter.get(i).intValue()+1);
-
-				//add to tmp;
-				//utilizing the multiplicative property
-				tmp.real = tmp.real.multiply(encProdReal).mod(crypto.nsquare);
-				tmp.img = tmp.img.multiply(encProdImg).mod(crypto.nsquare);
-				//quantizationCounter.set(k, quantizationCounter.get(i).intValue()+1);
-
-			}
-			encSpectrum.add(tmp);
-			System.out.println(System.nanoTime()-tic);
-		}
-		//System.out.println((System.currentTimeMillis()-t0));
-		return encSpectrum;
+	@Override
+	public List<BigComplex> homoDFT(List<BigComplex> inputList) {
+		return ppDFT(inputList,windowLength,0,samplingRate);
 	}
-	
-	/** write a BigComplex list to the file in fileName. The data is appended to the file. 
-	 *  all data takes a line, ending with '\n'.
-	 * @param fileName output fileName
-	 *  @param list the list convert
-	 * @throws IOException */
-	public static void writeComplexArrayToFile(String fileName, List<BigComplex> list){
-		PrintWriter out = null;
-		try{
-			out = new PrintWriter(new BufferedWriter(new FileWriter(fileName)),true);
-			for (BigComplex x:list){
-				//output only the real part for visualization
-				//this function writes both real and imaginary parts
-				out.println(x.real.toString()+","+x.img.toString());
-			}
-			out.print('\n');
-		}catch(IOException e){
-			e.printStackTrace(); 
-		}finally{
-			if(out!=null) out.close();
-		}
-	}
-	
-	/**
-	 * Perform encryption with encrypteFile with the crypto whose pubKey is given in pubKey
-	 * @param encryptedFile path to the encryptedFile
-	 * @param stream boolean flag for static file (false), stream data (true)
-	 * @return true if the operation is successful, otherwise not
-	 */
-	public static boolean doDFTOnEncryptedFile(String encryptedFile, String pubKey, double startFreq, double endFreq){
-		//read file
-		InputStream fis = null;
-		BufferedReader br = null;
-		
-		try {
-			//read file
-			fis = new FileInputStream(encryptedFile);
-			br = new BufferedReader(new InputStreamReader(fis,Charset.defaultCharset()));
-			String line =null;
-			
-			//get configuration line Q1 and Q2
-			line = br.readLine();
-			if (line==null) throw new FileNotFoundException("File Corrupted. Scaling factor not found in the first line");
-			String[] fileParams = line.trim().split(" ");
-			//extrac Q1, Q2, numPoint, steps
-			long Q1=0, Q2=0;
-			for(String str:fileParams){
-				String[] param = str.split(":");
-				if ("Q1".equalsIgnoreCase(param[0])) Q1=Long.parseLong(param[1]);
-				else if ("Q2".equalsIgnoreCase(param[0])) Q2=Long.parseLong(param[1]);
-			}
-			
-			if (Q1==0||Q2==0||windowLength==0||overlap==0) throw new Exception("Bad inialization parameter for PaillierFFT engine");
-					
-			PaillierFFT engine = new PaillierFFT(Q1, Q2, pubKey);
-			List<BigComplex> encryptedMeasurementData = new ArrayList<BigComplex>();
-			
-			//load all encrypted measurement data into the the list.
-			while ((line=br.readLine())!=null){
-				String[] tmpStrs = line.split("\t ");
-				//tmpStrs[0] is the timestamp
-				BigComplex singleEncryptedMeasurement = new BigComplex(new BigInteger(tmpStrs[1]),BigInteger.ZERO);
-				encryptedMeasurementData.add(singleEncryptedMeasurement);
-			}
-			
-			//perform FFT over the time window and move the time window
-			int startIndex = 0;
-			int endIndex = windowLength;
-			
-			while (endIndex<encryptedMeasurementData.size()){
-				String encryptedSpectrumFile = encryptedFile+"_"+startIndex+"_"+endIndex+" "+String.format("%.2f", startFreq)+String.format("%.2f", endFreq);
-				List<BigComplex> encryptedSpectrum = engine.ppDFT(encryptedMeasurementData.subList(startIndex, endIndex), windowLength,startFreq,endFreq);
-				writeComplexArrayToFile(encryptedSpectrumFile,encryptedSpectrum);
-				startIndex+=(windowLength-overlap);
-				endIndex+=(windowLength-overlap);
-			}
-			//perform ppDFT with encryptedMeasurementData
-			//write encryptedSpectrum to disk
-			return true;
-		} catch (Exception e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} finally{
-			try{
-				if (fis!=null) fis.close();
-				if (br!=null) br.close();
-			}
-			catch(IOException ex){
-			}
-		}
-		return false;
+
+	@Override
+	public List<BigComplex> homoDFT(List<BigComplex> inputList, double freqStart, double freqEnd) {
+		return ppDFT(inputList,windowLength,freqStart,freqEnd);
 	}
 }

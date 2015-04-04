@@ -1,5 +1,6 @@
 package utk.security.PPSE.crypto;
 import java.math.BigInteger;
+import java.util.List;
 
 import org.jscience.mathematics.number.Complex;
 
@@ -32,5 +33,13 @@ public class BigComplex {
 		//TODO throws an exception, or use other library than jscience
 		assert real.compareTo(maxLong)<0&&img.compareTo(maxLong)<0;
 		return Complex.valueOf(real.doubleValue(),img.doubleValue());
+	}
+	
+	public static String BigComplexListToString(List<BigComplex> list){
+		String res = "";
+		for (BigComplex item:list){
+			res+=item.toString()+"\n";
+		}
+		return res;
 	}
 }
