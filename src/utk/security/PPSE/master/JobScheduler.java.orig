@@ -255,7 +255,11 @@ public class JobScheduler {
 			for(int taskNum=0;taskNum<tasks.size();taskNum++){
 				// static allocation of worker servers. do not consider the failover for now.
 				System.out.println("Processing task number: "+taskNum);
-
+<<<<<<< HEAD
+				//TODO investigate the problem, here.
+				//Bug happened, 2 task are sent to the same server.
+=======
+>>>>>>> 5dc6b9645cb1c14bfc5f62b151ab903f11de88c6
 				final int slaveIndex = taskNum*slaveList.size()/tasks.size();
 				System.out.println("Chosen slave: "+slaveIndex);
 				
