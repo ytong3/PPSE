@@ -86,7 +86,7 @@ public class RMIServer implements PPSERMIServer{
 				   BigComplex.BigComplexListToString(encryptedSpectrum);
 		} catch (IOException e) {
 			System.err.println(e.getClass()+":"+e.getMessage());
-			e.printStackTrace();
+			//e.printStackTrace();
 		} finally{
 			try{
 				if (fis!=null) fis.close();
@@ -121,7 +121,7 @@ public class RMIServer implements PPSERMIServer{
 			Registry registry = LocateRegistry.getRegistry(portNum);
 			registry.rebind("PPSERMIServer", stub);
 			
-			System.err.println("Server Ready");
+			System.out.println("Server Ready");
 		} catch(Exception e){
 			System.err.println("Server exception: "+e.toString());
 			e.printStackTrace();
