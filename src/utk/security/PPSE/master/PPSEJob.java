@@ -10,7 +10,6 @@ import java.util.List;
  *
  */
 public class PPSEJob{
-	
 	/**
 	 * the path to the input in the NFS
 	 */

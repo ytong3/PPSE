@@ -1,4 +1,4 @@
-#!bin/bash
+#!/usr/local/bin/bash
 
 # first argument is the port_number
 # second argument is the public key file

@@ -44,7 +44,15 @@ public class PaillierFFT implements HomomorphicDFT{
 	//private ArrayList<Integer> quantizationCounter;
 	private static final boolean debug = true;
 
+	/**
+	 * Constructor for crypto engine for homomorphic cryptographic computation
+	 * @param Q1 Scaling factor for raw measurement data 
+	 * @param Q2 Scaling factor for the Fourier matrix
+	 * @param keyFile public or private key file
+	 * @param keyType type of the key. True for public key, false for private key
+	 */
 	public PaillierFFT(long Q1, long Q2, String keyFile, boolean keyType){
+		//TODO refactor. make the engine singleton to reduce the reuse the engine and the lookup table.
 		crypto = new Paillier(keyFile,keyType);
 		mode = keyType;//true for encrytion, false for decryption
 		this.Q1 = Q1;

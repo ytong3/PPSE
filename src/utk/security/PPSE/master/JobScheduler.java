@@ -13,13 +13,13 @@ import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TimerTask;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
@@ -35,12 +35,10 @@ import utk.security.PPSE.slave.PPSERemoteTask;
 
 public class JobScheduler {
 	
-	public enum SlaveStatus {
-		UP,DOWN
-	}
+	public enum SlaveStatus {UP,DOWN};
 
 	private int taskTimeOut = 10;
-	private int statusCheckPeriod = 20;
+	private int statusCheckPeriod = 5;
 	private List<String> slaveList;
 	private Map<String,SlaveStatus> slaveStatus;
 	private Map<String,PPSERMIServer> slaveStubs;
@@ -48,6 +46,8 @@ public class JobScheduler {
 	private ExecutorService executor;
 	private ExecutorService pingExecutor;
 	private CompletionService<String> taskExecutor;
+	
+	//lock
 	
 	
 	public JobScheduler(int threadNum, List<String> slaveAddr){
@@ -57,36 +57,44 @@ public class JobScheduler {
 		slaveStubs = new HashMap<String, PPSERMIServer>();
 		
 		//add all slaves to list and get their remote objects
-		for (String addrStr:slaveAddr){			
+		for (String addrStr:slaveAddr){		
+			slaveList.add(addrStr);
 			PPSERMIServer stub = lookupStub(addrStr);
-			if (stub!=null) slaveStubs.put(addrStr, stub);
+			//FIXME stub!=null may not be the good condition to see if PPSERMIServer is located.
+			if (stub!=null) {
+				slaveStubs.put(addrStr, stub);
+				slaveStatus.put(addrStr, SlaveStatus.UP);
+			}
 		}
 		
-		pingExecutor = Executors.newFixedThreadPool(Math.max(1,slaveList.size()/2));;
+		pingExecutor = Executors.newFixedThreadPool(Math.max(1,slaveList.size()/2));
 		taskExecutor = new ExecutorCompletionService<String>(Executors.newFixedThreadPool(slaveList.size()));
-		//begin monitor the status of RMI servers
+		System.err.println("begin monitor the status of RMI servers.");
 		executor.submit(new Thread(new ServerStatusTracker(),"status_tracker"));
-		
 	}
 	
 	private PPSERMIServer lookupStub(String addrStr){
-			System.out.println(addrStr);
 			String[] addr = addrStr.split(":");
-			slaveList.add(addrStr);
+			PPSERMIServer stub = null;
 			try{
 				Registry registry = LocateRegistry.getRegistry(addr[0], Integer.parseInt(addr[1]));
-				PPSERMIServer stub = (PPSERMIServer) registry.lookup("PPSERMIServer");
-				return stub;
+				stub = (PPSERMIServer) registry.lookup("PPSERMIServer");
 			}catch(RemoteException e){
-				e.printStackTrace();
+				System.err.println(e.getClass()+":"+e.getMessage());
+				return null;
 			}catch(NotBoundException e){
-				e.printStackTrace();
+				System.err.println(e.getClass()+":"+e.getMessage());
+				return null;
+			}catch(Exception e){
+				System.err.println(e.getClass()+":"+e.getMessage());
+				return null;
 			}
-			return null;
+			return stub;
 	}
 	
 	public void feedPSSEJob(PPSEJob job){
 		System.err.println("Job Received at job scheduler");
+		System.err.println("number of slaves:"+slaveList.size());
 		Future<List<String>> JobResult = executor.submit(new PSSEJobThread(job));
 		System.err.println("Job Submitted to executor at job scheduler");
 		//do something according to JobResult
@@ -97,12 +105,13 @@ public class JobScheduler {
 				// update the database
 				DBUpdate(job,true);
 			}
+			// TODO if job is failed. REDO
 		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			System.err.println(e.getClass()+":"+e.getMessage());
 		} catch (ExecutionException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			System.err.println(e.getClass()+":"+e.getMessage());
+		} catch (Exception e){
+			System.err.println(e.getClass()+":"+e.getMessage());
 		}
 		
 	}
@@ -112,16 +121,15 @@ public class JobScheduler {
 	public ArrayList<Task> generateTasks(PPSEJob job){
 		ArrayList<Task> res = new ArrayList<Task>();
 		//split job into slaveStatus in terms of frequency band
-		//asumming a single file contains only one time windows worth of data.
+		//assuming a single file contains only one time windows worth of data.
 		//this can be achieved by having an additional method to preprocess the measurement data before writing them onto the disk.
-		// FIXME this function will generate 4 tasks given only 3 hosts. Something went wrong.
 		double freqDelta = (job.freqBand[1]-job.freqBand[0])/slaveList.size();
 		double taskFreqBandStart = job.freqBand[0];
 		double taskFreqBandEnd = taskFreqBandStart+freqDelta;
 		for(int t=0;t<slaveList.size();t++){
 			Task task = new Task(job.inputFileName,new double[]{taskFreqBandStart,taskFreqBandEnd},job.timeWindow, job.samplingRate);
 			res.add(task);
-			taskFreqBandStart=taskFreqBandEnd+1.0/(job.timeWindow[1]-job.timeWindow[0]);//avoid duplicate frequency coefficients
+			taskFreqBandStart=Math.min(job.freqBand[1],taskFreqBandEnd+1.0/(job.timeWindow[1]-job.timeWindow[0]));//avoid duplicate frequency coefficients
 			taskFreqBandEnd = Math.min(job.freqBand[1],taskFreqBandStart+freqDelta);
 		}
 		return res;
@@ -169,39 +177,41 @@ public class JobScheduler {
 	}
 	
 	private class ServerStatusTracker implements Runnable{
-		
 		@Override
 		public void run() {
 			//polling status of RMI servers every 60 second
 			while(true){
-				//TODO check RMI server status by calling the responsive functions.
-				Future res = null;
-				for (final String slaveAddr:slaveList){
-					//if the stub is still valid
-					if (slaveStatus.get(slaveAddr)==SlaveStatus.UP){
-						final PPSERMIServer stub = slaveStubs.get(slaveAddr);
-						res = pingExecutor.submit(new Runnable(){
-							@Override
-							public void run() {
+				//check RMI server status by calling the responsive functions.
+				for (int i=0;i<slaveList.size();i++){
+					//for each slave
+					final String slaveAddr = slaveList.get(i); 
+					Future<?> res = pingExecutor.submit(new Runnable(){
+						@Override
+						public void run() {
+							if (slaveStatus.get(slaveAddr)==SlaveStatus.UP){ //if stub is still valid before checking
+								PPSERMIServer stub = slaveStubs.get(slaveAddr);
 								try {
 									if(stub.checkHealth().equals("GOOD"))
 										slaveStatus.put(slaveAddr, SlaveStatus.UP);
-								} catch (RemoteException e) {
+								} catch (Exception e) {
 									slaveStatus.put(slaveAddr,SlaveStatus.DOWN);
 									e.printStackTrace();
 								}
-							}	
-						});
-					}else{
-						//if not a valid stub, try reconnect and refresh the stub
-						PPSERMIServer stub = lookupStub(slaveAddr);
-						if (stub!=null){
-							slaveStubs.put(slaveAddr, stub);
+							}
+							else{ //if stub is invalid, try reconnect
+								PPSERMIServer oldStub = slaveStubs.get(slaveAddr);
+								PPSERMIServer stub = lookupStub(slaveAddr);
+								if (!stub.equals(oldStub)){
+									slaveStubs.put(slaveAddr, stub);
+									//update status
+									slaveStatus.put(slaveAddr, SlaveStatus.UP);
+								}
+							}
 						}
-					}
+					});
 					
 					try {
-						res.get(5000, TimeUnit.MILLISECONDS);
+						res.get(3, TimeUnit.SECONDS);
 					} catch (TimeoutException e) {
 						slaveStatus.put(slaveAddr,SlaveStatus.DOWN);
 						e.printStackTrace();
@@ -215,10 +225,7 @@ public class JobScheduler {
 				}
 
 				//print out status information
-				System.err.println("Periodical status update");
-				for(Map.Entry<String, SlaveStatus> entry:slaveStatus.entrySet()){
-					System.err.println(entry.getKey()+":"+entry.getValue());
-				}
+				displayStatus();
 				
 				try {
 					//Check status every 60 seconds
@@ -227,10 +234,17 @@ public class JobScheduler {
 					e.printStackTrace();
 					//try to bring the same tracker again
 					executor.submit(new Thread(new ServerStatusTracker(),"status_tracker"));
-					return;
 				}
 			}
-			
+		}
+
+		private void displayStatus() {
+			System.err.println("*****************************************************************");
+			System.err.println("Periodical status update at "+new Timestamp(System.currentTimeMillis()));
+			for(Map.Entry<String, SlaveStatus> entry:slaveStatus.entrySet()){
+				System.err.println(entry.getKey()+":"+entry.getValue());
+			}
+			System.err.println("*****************************************************************");
 		}
 	}
 	
@@ -244,8 +258,8 @@ public class JobScheduler {
 		@Override
 		public List<String> call() throws Exception {
 			//get a list of tasks
-			List<Task> tasks = generateTasks(job);
 			
+			List<Task> tasks = generateTasks(job);
 			System.err.println(String.format("Job divided into %d tasks",tasks.size()));
 			for(Task task:tasks){
 				System.out.println(task.toString());
@@ -254,10 +268,8 @@ public class JobScheduler {
 			List<String> res = new ArrayList<String>();
 			for(int taskNum=0;taskNum<tasks.size();taskNum++){
 				// static allocation of worker servers. do not consider the failover for now.
-				System.out.println("Processing task number: "+taskNum);
-
 				final int slaveIndex = taskNum*slaveList.size()/tasks.size();
-				System.out.println("Chosen slave: "+slaveIndex);
+				System.out.println("Processing task number: "+taskNum+" Chosen slave: "+slaveIndex);
 				
 				final Task task = tasks.get(taskNum);
 				taskExecutor.submit(new Callable<String>(){
@@ -293,7 +305,7 @@ public class JobScheduler {
 		}
 		String configFile = argv[0];
 		String encrypted_measurement = argv[1];
-		List<String> slaveList = new ArrayList<String>();
+		List<String> inputSlaveList = new ArrayList<String>();
 		
 		//process configFile
 		BufferedReader br = null;
@@ -301,7 +313,7 @@ public class JobScheduler {
 			br = new BufferedReader(new FileReader(configFile));
 			String line = null;
 			while((line=br.readLine())!=null){
-				slaveList.add(line);
+				inputSlaveList.add(line);
 			}
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
@@ -315,11 +327,10 @@ public class JobScheduler {
 				e.printStackTrace();
 			}
 		}
+
 		
-		
-		
-		System.out.println("number of threads in pool: "+(slaveList.size()+1));
-		JobScheduler testScheduler = new JobScheduler(slaveList.size()+1,slaveList);
+		System.out.println("number of threads in pool: "+(inputSlaveList.size()+3));
+		JobScheduler testScheduler = new JobScheduler(inputSlaveList.size()+3,inputSlaveList);
 		
 		//construct a job
 		System.out.println("Constructing job for "+encrypted_measurement);
@@ -327,8 +338,7 @@ public class JobScheduler {
 									  new double[]{0.1,1},	//frequency band
 									  100,					//sampling rate of the measurement data
 									  new int[]{0,40});		//time window
-		
-		//begin computing
+		System.out.println("Feeding the job");
 		testScheduler.feedPSSEJob(testJob);
 		
 	}

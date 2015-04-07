@@ -1,4 +1,4 @@
-#!bin/bash
+#!/usr/local/bin/bash
 
 root=`dirname "$0"`
 root=`cd "$root"; pwd`
